@@ -6,8 +6,9 @@ import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import {
     collection, onSnapshot, doc,
     addDoc, updateDoc, deleteDoc, setDoc,
-    Timestamp, query, where
+    Timestamp, query, where, getDoc
 } from 'firebase/firestore';
+import { useNavigate } from 'react-router-dom';
 
 interface AppContextType {
     users: User[];
@@ -15,8 +16,8 @@ interface AppContextType {
     events: Event[];
     settings: Settings;
     openingHours: OpeningHoursSettings;
-    currentUser: User | null; // Notre type User
-    firebaseUser: FirebaseUser | null; // Le type User de Firebase
+    currentUser: User | null;
+    firebaseUser: FirebaseUser | null;
     loading: boolean;
     addUser: (user: Omit<User, 'id'>) => Promise<void>;
     updateUser: (user: User) => Promise<void>;
@@ -44,82 +45,87 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
     const [loading, setLoading] = useState(true);
 
-    // Gérer l'état de l'authentification
+    const navigate = useNavigate();
+
+    // 🔐 Suivi de l'état de connexion Firebase
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, async (user) => {
             setFirebaseUser(user);
+
             if (user) {
-                // L'utilisateur est connecté, récupérons son profil depuis Firestore
-                const userDocRef = doc(db, 'users', user.uid);
-                const unsubscribeDoc = onSnapshot(userDocRef, (doc) => {
-                    if (doc.exists()) {
-                        setCurrentUser({ id: doc.id, ...doc.data() } as User);
-                    } else {
-                        // L'utilisateur est authentifié mais n'a pas de profil dans Firestore, cas à gérer (ex: création de profil)
-                        setCurrentUser(null);
-                    }
-                    setLoading(false);
-                });
-                return () => unsubscribeDoc();
+                // Vérifie si le document utilisateur existe déjà
+                const userRef = doc(db, 'users', user.uid);
+                const userSnap = await getDoc(userRef);
+
+                if (!userSnap.exists()) {
+                    // 🔹 Création automatique du profil Firestore à la première connexion
+                    const newUser: User = {
+                        id: user.uid,
+                        name: user.displayName || user.email?.split('@')[0] || 'Utilisateur',
+                        role: 'user',
+                    };
+                    await setDoc(userRef, newUser);
+                    setCurrentUser(newUser);
+                } else {
+                    setCurrentUser({ id: userSnap.id, ...userSnap.data() } as User);
+                }
+
+                setLoading(false);
             } else {
-                // L'utilisateur est déconnecté
+                // 🔸 Si déconnexion → redirection vers /login
                 setCurrentUser(null);
                 setLoading(false);
+                navigate('/login');
             }
         });
-        return () => unsubscribe();
-    }, []);
 
-    // Écouter les changements en temps réel sur les collections Firestore
+        return () => unsubscribe();
+    }, [navigate]);
+
+    // 🔁 Écoute des collections Firestore (en temps réel)
     useEffect(() => {
+        if (!firebaseUser) return; // 🔸 Attendre que l'utilisateur soit connecté
         setLoading(true);
-        // Users (si admin)
-        const qUsers = query(collection(db, "users"));
-        const unsubUsers = onSnapshot(qUsers, (querySnapshot) => {
-            const usersData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User));
-            setUsers(usersData);
+
+        const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
+            const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as User));
+            setUsers(data);
         });
 
-        // Slots
-        const qSlots = query(collection(db, "slots"));
-        const unsubSlots = onSnapshot(qSlots, (querySnapshot) => {
-            const slotsData = querySnapshot.docs.map(doc => {
-                const data = doc.data();
+        const unsubSlots = onSnapshot(collection(db, 'slots'), (snap) => {
+            const data = snap.docs.map(doc => {
+                const d = doc.data();
                 return {
                     id: doc.id,
-                    ...data,
-                    start: (data.start as Timestamp).toDate().toISOString(),
-                    end: (data.end as Timestamp).toDate().toISOString(),
+                    ...d,
+                    start: (d.start as Timestamp).toDate().toISOString(),
+                    end: (d.end as Timestamp).toDate().toISOString(),
                 } as Slot;
             });
-            setSlots(slotsData);
+            setSlots(data);
         });
 
-        // Events
-        const qEvents = query(collection(db, "events"));
-        const unsubEvents = onSnapshot(qEvents, (querySnapshot) => {
-            const eventsData = querySnapshot.docs.map(doc => {
-                const data = doc.data();
+        const unsubEvents = onSnapshot(collection(db, 'events'), (snap) => {
+            const data = snap.docs.map(doc => {
+                const d = doc.data();
                 return {
                     id: doc.id,
-                    ...data,
-                    start: (data.start as Timestamp).toDate().toISOString(),
-                    end: (data.end as Timestamp).toDate().toISOString(),
+                    ...d,
+                    start: (d.start as Timestamp).toDate().toISOString(),
+                    end: (d.end as Timestamp).toDate().toISOString(),
                 } as Event;
             });
-            setEvents(eventsData);
+            setEvents(data);
         });
 
-        // Configuration
-        const configDocRef = doc(db, 'configuration', 'main');
-        const unsubConfig = onSnapshot(configDocRef, (doc) => {
-            if (doc.exists()) {
-                const data = doc.data();
+        const configRef = doc(db, 'configuration', 'main');
+        const unsubConfig = onSnapshot(configRef, (snap) => {
+            if (snap.exists()) {
+                const data = snap.data();
                 setSettings(data.settings || DEFAULT_SETTINGS);
                 setOpeningHours(data.openingHours || DEFAULT_OPENING_HOURS);
             } else {
-                // Si la config n'existe pas, on la crée
-                setDoc(configDocRef, { settings: DEFAULT_SETTINGS, openingHours: DEFAULT_OPENING_HOURS });
+                setDoc(configRef, { settings: DEFAULT_SETTINGS, openingHours: DEFAULT_OPENING_HOURS });
             }
         });
 
@@ -131,13 +137,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             unsubEvents();
             unsubConfig();
         };
-    }, []);
+    }, [firebaseUser]);
 
-
+    // 🔧 Fonctions CRUD (inchangées, sauf une légère correction)
     const addUser = async (user: Omit<User, 'id'>) => {
-        // Note: la création d'utilisateur se fait via Firebase Auth.
-        // Cette fonction sert à créer le document de profil dans Firestore.
-        // Pour cet exemple, on simule l'ajout manuel.
         await addDoc(collection(db, 'users'), user);
     };
 
@@ -148,7 +151,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     const deleteUser = async (userId: string) => {
         await deleteDoc(doc(db, 'users', userId));
-        // Il faudrait aussi supprimer les créneaux de l'utilisateur
         const userSlots = slots.filter(s => s.userId === userId);
         for (const slot of userSlots) {
             await deleteDoc(doc(db, 'slots', slot.id));
@@ -159,6 +161,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (!currentUser) throw new Error("Utilisateur non connecté");
         await addDoc(collection(db, 'slots'), {
             ...slot,
+            userId: currentUser.id,
             userName: currentUser.name,
             start: Timestamp.fromDate(new Date(slot.start)),
             end: Timestamp.fromDate(new Date(slot.end)),
@@ -186,8 +189,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         });
     };
 
-    const updateEvent = async (updatedEvent: Event) => {
-        const { id, ...data } = updatedEvent;
+    const updateEvent = async (event: Event) => {
+        const { id, ...data } = event;
         await updateDoc(doc(db, 'events', id), {
             ...data,
             start: Timestamp.fromDate(new Date(data.start)),
@@ -209,15 +212,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     const applyUserTemplate = async (userId: string, targetMonthDate: Date) => {
         const user = users.find(u => u.id === userId);
-        if (!user || !user.template) return;
-
-        // ... (la logique de applyUserTemplate reste la même, mais au lieu d'appeler setSlots,
-        // elle devrait créer de nouveaux documents dans la collection 'slots')
-
-        // Pour la simplicité de cette migration, je laisse cette partie en exercice.
-        // L'idée serait de construire un tableau `newSlots` comme avant, puis de faire une boucle
-        // et d'appeler `addSlot` pour chaque nouvel élément, en vérifiant les doublons.
-        alert("La logique d'application de template doit être adaptée pour créer des documents Firestore.");
+        if (!user?.template) return;
+        alert("🚧 La logique d'application de template doit être adaptée pour créer des documents Firestore.");
     };
 
     return (
