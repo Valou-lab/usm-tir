@@ -1,14 +1,12 @@
 import React, { createContext, useState, useEffect, ReactNode } from 'react';
 import type { User, Slot, Event, Settings, OpeningHoursSettings } from '../types';
 import { DEFAULT_SETTINGS, DEFAULT_OPENING_HOURS } from '../constants';
-import { auth, db } from '../firebase';
-import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
+import { auth, db, googleProvider } from '../firebase';
+import { onAuthStateChanged, User as FirebaseUser, signInWithPopup, signOut } from 'firebase/auth';
 import {
     collection, onSnapshot, doc,
-    addDoc, updateDoc, deleteDoc, setDoc,
-    Timestamp, query, where, getDoc
+    addDoc, setDoc, updateDoc, deleteDoc, Timestamp, getDoc
 } from 'firebase/firestore';
-import { useNavigate } from 'react-router-dom';
 
 interface AppContextType {
     users: User[];
@@ -31,6 +29,8 @@ interface AppContextType {
     updateSettings: (settings: Settings) => Promise<void>;
     updateOpeningHours: (settings: OpeningHoursSettings) => Promise<void>;
     applyUserTemplate: (userId: string, targetMonth: Date) => void;
+    loginWithGoogle: () => Promise<void>;
+    logout: () => Promise<void>;
 }
 
 export const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -45,20 +45,26 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
     const [loading, setLoading] = useState(true);
 
-    const navigate = useNavigate();
+    // 🔹 Connexion Google
+    const loginWithGoogle = async () => {
+        const result = await signInWithPopup(auth, googleProvider);
+        // Le listener onAuthStateChanged prendra le relais pour créer le doc Firestore
+    };
 
-    // 🔐 Suivi de l'état de connexion Firebase
+    const logout = async () => {
+        await signOut(auth);
+        setCurrentUser(null);
+        setFirebaseUser(null);
+    };
+
+    // 🔐 Gestion Auth et création doc Firestore
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, async (user) => {
             setFirebaseUser(user);
-
             if (user) {
-                // Vérifie si le document utilisateur existe déjà
                 const userRef = doc(db, 'users', user.uid);
                 const userSnap = await getDoc(userRef);
-
                 if (!userSnap.exists()) {
-                    // 🔹 Création automatique du profil Firestore à la première connexion
                     const newUser: User = {
                         id: user.uid,
                         name: user.displayName || user.email?.split('@')[0] || 'Utilisateur',
@@ -69,53 +75,35 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 } else {
                     setCurrentUser({ id: userSnap.id, ...userSnap.data() } as User);
                 }
-
-                setLoading(false);
             } else {
-                // 🔸 Si déconnexion → redirection vers /login
                 setCurrentUser(null);
-                setLoading(false);
-                navigate('/login');
             }
+            setLoading(false);
         });
 
         return () => unsubscribe();
-    }, [navigate]);
+    }, []);
 
-    // 🔁 Écoute des collections Firestore (en temps réel)
+    // 🔁 Listeners Firestore
     useEffect(() => {
-        if (!firebaseUser) return; // 🔸 Attendre que l'utilisateur soit connecté
         setLoading(true);
 
         const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
-            const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as User));
-            setUsers(data);
+            setUsers(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as User)));
         });
 
         const unsubSlots = onSnapshot(collection(db, 'slots'), (snap) => {
-            const data = snap.docs.map(doc => {
+            setSlots(snap.docs.map(doc => {
                 const d = doc.data();
-                return {
-                    id: doc.id,
-                    ...d,
-                    start: (d.start as Timestamp).toDate().toISOString(),
-                    end: (d.end as Timestamp).toDate().toISOString(),
-                } as Slot;
-            });
-            setSlots(data);
+                return { id: doc.id, ...d, start: (d.start as Timestamp).toDate().toISOString(), end: (d.end as Timestamp).toDate().toISOString() } as Slot;
+            }));
         });
 
         const unsubEvents = onSnapshot(collection(db, 'events'), (snap) => {
-            const data = snap.docs.map(doc => {
+            setEvents(snap.docs.map(doc => {
                 const d = doc.data();
-                return {
-                    id: doc.id,
-                    ...d,
-                    start: (d.start as Timestamp).toDate().toISOString(),
-                    end: (d.end as Timestamp).toDate().toISOString(),
-                } as Event;
-            });
-            setEvents(data);
+                return { id: doc.id, ...d, start: (d.start as Timestamp).toDate().toISOString(), end: (d.end as Timestamp).toDate().toISOString() } as Event;
+            }));
         });
 
         const configRef = doc(db, 'configuration', 'main');
@@ -137,28 +125,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             unsubEvents();
             unsubConfig();
         };
-    }, [firebaseUser]);
+    }, []);
 
-    // 🔧 Fonctions CRUD (inchangées, sauf une légère correction)
-    const addUser = async (user: Omit<User, 'id'>) => {
-        await addDoc(collection(db, 'users'), user);
-    };
-
-    const updateUser = async (updatedUser: User) => {
-        const { id, ...data } = updatedUser;
-        await setDoc(doc(db, 'users', id), data, { merge: true });
-    };
-
+    // 🔧 CRUD functions (inchangées)
+    const addUser = async (user: Omit<User, 'id'>) => await addDoc(collection(db, 'users'), user);
+    const updateUser = async (u: User) => await setDoc(doc(db, 'users', u.id), u, { merge: true });
     const deleteUser = async (userId: string) => {
         await deleteDoc(doc(db, 'users', userId));
         const userSlots = slots.filter(s => s.userId === userId);
-        for (const slot of userSlots) {
-            await deleteDoc(doc(db, 'slots', slot.id));
-        }
+        for (const s of userSlots) await deleteDoc(doc(db, 'slots', s.id));
     };
 
     const addSlot = async (slot: Omit<Slot, 'id' | 'userName'>) => {
-        if (!currentUser) throw new Error("Utilisateur non connecté");
+        if (!currentUser) throw new Error('Utilisateur non connecté');
         await addDoc(collection(db, 'slots'), {
             ...slot,
             userId: currentUser.id,
@@ -168,8 +147,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         });
     };
 
-    const updateSlot = async (updatedSlot: Slot) => {
-        const { id, ...data } = updatedSlot;
+    const updateSlot = async (slot: Slot) => {
+        const { id, ...data } = slot;
         await updateDoc(doc(db, 'slots', id), {
             ...data,
             start: Timestamp.fromDate(new Date(data.start)),
@@ -177,44 +156,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         });
     };
 
-    const deleteSlot = async (slotId: string) => {
-        await deleteDoc(doc(db, 'slots', slotId));
-    };
-
+    const deleteSlot = async (slotId: string) => await deleteDoc(doc(db, 'slots', slotId));
     const addEvent = async (event: Omit<Event, 'id'>) => {
-        await addDoc(collection(db, 'events'), {
-            ...event,
-            start: Timestamp.fromDate(new Date(event.start)),
-            end: Timestamp.fromDate(new Date(event.end)),
-        });
+        await addDoc(collection(db, 'events'), { ...event, start: Timestamp.fromDate(new Date(event.start)), end: Timestamp.fromDate(new Date(event.end)) });
     };
-
     const updateEvent = async (event: Event) => {
         const { id, ...data } = event;
-        await updateDoc(doc(db, 'events', id), {
-            ...data,
-            start: Timestamp.fromDate(new Date(data.start)),
-            end: Timestamp.fromDate(new Date(data.end)),
-        });
+        await updateDoc(doc(db, 'events', id), { ...data, start: Timestamp.fromDate(new Date(data.start)), end: Timestamp.fromDate(new Date(data.end)) });
     };
-
-    const deleteEvent = async (eventId: string) => {
-        await deleteDoc(doc(db, 'events', eventId));
-    };
-
-    const updateSettings = async (newSettings: Settings) => {
-        await setDoc(doc(db, 'configuration', 'main'), { settings: newSettings }, { merge: true });
-    };
-
-    const updateOpeningHours = async (newOpeningHours: OpeningHoursSettings) => {
-        await setDoc(doc(db, 'configuration', 'main'), { openingHours: newOpeningHours }, { merge: true });
-    };
-
-    const applyUserTemplate = async (userId: string, targetMonthDate: Date) => {
-        const user = users.find(u => u.id === userId);
-        if (!user?.template) return;
-        alert("🚧 La logique d'application de template doit être adaptée pour créer des documents Firestore.");
-    };
+    const deleteEvent = async (eventId: string) => await deleteDoc(doc(db, 'events', eventId));
+    const updateSettings = async (s: Settings) => await setDoc(doc(db, 'configuration', 'main'), { settings: s }, { merge: true });
+    const updateOpeningHours = async (h: OpeningHoursSettings) => await setDoc(doc(db, 'configuration', 'main'), { openingHours: h }, { merge: true });
+    const applyUserTemplate = (userId: string, targetMonthDate: Date) => { alert('Logic template à adapter'); };
 
     return (
         <AppContext.Provider value={{
@@ -222,7 +175,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             addUser, updateUser, deleteUser,
             addSlot, updateSlot, deleteSlot,
             addEvent, updateEvent, deleteEvent,
-            updateSettings, updateOpeningHours, applyUserTemplate
+            updateSettings, updateOpeningHours, applyUserTemplate,
+            loginWithGoogle, logout
         }}>
             {children}
         </AppContext.Provider>

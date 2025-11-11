@@ -1,85 +1,40 @@
 import React, { useContext } from 'react';
 import { AppContext } from '../context/AppContext';
 import { UserCircleIcon } from './Icons';
-import { signInWithPopup, signOut } from 'firebase/auth';
-import { auth, googleProvider } from '../firebase';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 
 const Header: React.FC = () => {
     const context = useContext(AppContext);
     const navigate = useNavigate();
-
     if (!context) return null;
 
-    const { currentUser, firebaseUser } = context;
-
-    const handleGoogleLogin = async () => {
-        try {
-            await signInWithPopup(auth, googleProvider);
-            navigate('/'); // redirige vers le calendrier
-        } catch (err) {
-            console.error(err);
-            alert('Erreur lors de la connexion Google.');
-        }
-    };
-
-    const handleLogout = async () => {
-        await signOut(auth);
-        navigate('/'); // redirige vers la page publique
-    };
+    const { firebaseUser, currentUser, loginWithGoogle, logout } = context;
 
     return (
         <header className="bg-brand-primary text-white shadow-md">
-            <div className="container mx-auto px-4 sm:px-6 lg:px-8">
-                <div className="flex items-center justify-between h-16">
-                    <h1 className="text-xl sm:text-2xl font-bold">Planning Association</h1>
+            <div className="container mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center h-16">
+                <h1 className="text-xl sm:text-2xl font-bold">Planning Association</h1>
 
-                    <nav className="flex items-center space-x-4">
-                        {firebaseUser && (
+                <nav className="flex items-center space-x-4">
+                    {firebaseUser && <>
+                        <Link to="/" className="px-3 py-2 rounded-md text-sm hover:bg-sky-600 transition">Calendrier</Link>
+                        {currentUser?.role === 'admin' && <Link to="/admin" className="px-3 py-2 rounded-md text-sm hover:bg-sky-600 transition">Admin</Link>}
+                    </>}
+
+                    <div className="flex items-center space-x-2">
+                        {firebaseUser ? (
                             <>
-                                <Link
-                                    to="/"
-                                    className="px-3 py-2 rounded-md text-sm font-medium hover:bg-sky-600 transition"
-                                >
-                                    Calendrier
-                                </Link>
-
-                                {currentUser?.role === 'admin' && (
-                                    <Link
-                                        to="/admin"
-                                        className="px-3 py-2 rounded-md text-sm font-medium hover:bg-sky-600 transition"
-                                    >
-                                        Admin
-                                    </Link>
-                                )}
-                            </>
-                        )}
-
-                        <div className="flex items-center space-x-2">
-                            {firebaseUser ? (
-                                <div className="flex items-center space-x-3">
-                                    <div className="flex items-center space-x-2">
-                                        <UserCircleIcon className="w-6 h-6" />
-                                        <span className="font-medium text-sm">{currentUser?.name}</span>
-                                    </div>
-                                    <button
-                                        onClick={handleLogout}
-                                        className="px-3 py-1.5 bg-red-500 text-white rounded-md text-sm hover:bg-red-600"
-                                    >
-                                        Déconnexion
-                                    </button>
+                                <div className="flex items-center space-x-2">
+                                    <UserCircleIcon className="w-6 h-6" />
+                                    <span className="font-medium text-sm">{currentUser?.name}</span>
                                 </div>
-                            ) : (
-                                <button
-                                    onClick={handleGoogleLogin}
-                                    className="px-3 py-1.5 bg-green-500 text-white rounded-md text-sm hover:bg-green-600"
-                                >
-                                    Se connecter avec Google
-                                </button>
-                            )}
-                        </div>
-                    </nav>
-                </div>
+                                <button onClick={logout} className="px-3 py-1.5 bg-red-500 text-white rounded-md text-sm hover:bg-red-600">Déconnexion</button>
+                            </>
+                        ) : (
+                            <button onClick={loginWithGoogle} className="px-3 py-1.5 bg-green-500 text-white rounded-md text-sm hover:bg-green-600">Se connecter avec Google</button>
+                        )}
+                    </div>
+                </nav>
             </div>
         </header>
     );
