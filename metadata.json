@@ -1,0 +1,5 @@
+{
+  "name": "Planning Association Sportive",
+  "description": "Une application de gestion de planning d'ouverture pour une association sportive, permettant aux membres de s'inscrire à des créneaux et aux administrateurs de gérer les utilisateurs et le calendrier.",
+  "requestFramePermissions": []
+}
