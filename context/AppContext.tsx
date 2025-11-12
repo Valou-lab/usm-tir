@@ -2,10 +2,22 @@ import React, { createContext, useState, useEffect, ReactNode } from 'react';
 import type { User, Slot, Event, Settings, OpeningHoursSettings } from '../types';
 import { DEFAULT_SETTINGS, DEFAULT_OPENING_HOURS } from '../constants';
 import { auth, db, googleProvider } from '../firebase';
-import { onAuthStateChanged, User as FirebaseUser, signInWithPopup, signOut } from 'firebase/auth';
 import {
-    collection, onSnapshot, doc,
-    addDoc, setDoc, updateDoc, deleteDoc, Timestamp, getDoc
+    onAuthStateChanged,
+    User as FirebaseUser,
+    signInWithPopup,
+    signInWithEmailAndPassword,
+    signOut,
+} from 'firebase/auth';
+import {
+    collection,
+    onSnapshot,
+    doc,
+    addDoc,
+    setDoc,
+    updateDoc,
+    deleteDoc,
+    Timestamp,
 } from 'firebase/firestore';
 
 interface AppContextType {
@@ -17,6 +29,9 @@ interface AppContextType {
     currentUser: User | null;
     firebaseUser: FirebaseUser | null;
     loading: boolean;
+    loginWithGoogle: () => Promise<void>;
+    loginWithEmail: (email: string, password: string) => Promise<void>;
+    logout: () => Promise<void>;
     addUser: (user: Omit<User, 'id'>) => Promise<void>;
     updateUser: (user: User) => Promise<void>;
     deleteUser: (userId: string) => Promise<void>;
@@ -29,8 +44,6 @@ interface AppContextType {
     updateSettings: (settings: Settings) => Promise<void>;
     updateOpeningHours: (settings: OpeningHoursSettings) => Promise<void>;
     applyUserTemplate: (userId: string, targetMonth: Date) => void;
-    loginWithGoogle: () => Promise<void>;
-    logout: () => Promise<void>;
 }
 
 export const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -47,74 +60,95 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     // 🔹 Connexion Google
     const loginWithGoogle = async () => {
-        const result = await signInWithPopup(auth, googleProvider);
-        // Le listener onAuthStateChanged prendra le relais pour créer le doc Firestore
+        await signInWithPopup(auth, googleProvider);
+        // Le listener onAuthStateChanged s’occupera de créer/récupérer le doc Firestore
     };
 
+    // 🔹 Connexion Email
+    const loginWithEmail = async (email: string, password: string) => {
+        await signInWithEmailAndPassword(auth, email, password);
+    };
+
+    // 🔹 Déconnexion
     const logout = async () => {
         await signOut(auth);
         setCurrentUser(null);
         setFirebaseUser(null);
     };
 
-    // 🔐 Gestion Auth et création doc Firestore
+    // 🔹 Gestion Auth + utilisateur Firestore
     useEffect(() => {
-        const unsubscribe = onAuthStateChanged(auth, async (user) => {
+        const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
             setFirebaseUser(user);
-            if (user) {
-                const userRef = doc(db, 'users', user.uid);
-                const userSnap = await getDoc(userRef);
-                if (!userSnap.exists()) {
+            if (!user) {
+                setCurrentUser(null);
+                setLoading(false);
+                return;
+            }
+
+            const userRef = doc(db, 'users', user.uid);
+
+            // Écoute en temps réel du document utilisateur
+            const unsubscribeUser = onSnapshot(userRef, async (snap) => {
+                if (!snap.exists()) {
                     const newUser: User = {
                         id: user.uid,
                         name: user.displayName || user.email?.split('@')[0] || 'Utilisateur',
-                        role: 'user',
+                        role: 'user', // 🔹 par défaut
                     };
                     await setDoc(userRef, newUser);
                     setCurrentUser(newUser);
                 } else {
-                    setCurrentUser({ id: userSnap.id, ...userSnap.data() } as User);
+                    const data = snap.data() as User;
+                    // 🔹 Si le champ role n’existe pas, on le met à jour
+                    if (!data.role) {
+                        await updateDoc(userRef, { role: 'user' });
+                        data.role = 'user';
+                    }
+                    setCurrentUser({ id: snap.id, ...data });
                 }
-            } else {
-                setCurrentUser(null);
-            }
-            setLoading(false);
+                setLoading(false);
+            });
+
+            return () => unsubscribeUser();
         });
 
-        return () => unsubscribe();
+        return () => unsubscribeAuth();
     }, []);
 
-    // 🔁 Listeners Firestore
+    // 🔁 Listeners Firestore globaux
     useEffect(() => {
-        setLoading(true);
-
         const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
-            setUsers(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as User)));
+
+            setUsers(snap.docs.map((doc) => ({ id: doc.id, ...doc.data() } as User)));
         });
 
         const unsubSlots = onSnapshot(collection(db, 'slots'), (snap) => {
-            setSlots(snap.docs.map(doc => {
-                const d = doc.data();
-                return { id: doc.id, ...d, start: (d.start as Timestamp).toDate().toISOString(), end: (d.end as Timestamp).toDate().toISOString() } as Slot;
-            }));
+            setSlots(
+                snap.docs.map((doc) => {
+                    const d = doc.data();
+                    return {
+                        id: doc.id,
+                        ...d,
+                        start: (d.start as Timestamp).toDate().toISOString(),
+                        end: (d.end as Timestamp).toDate().toISOString(),
+                    } as Slot;
+                })
+            );
         });
 
         const unsubEvents = onSnapshot(collection(db, 'events'), (snap) => {
-            setEvents(snap.docs.map(doc => {
-                const d = doc.data();
-                return { id: doc.id, ...d, start: (d.start as Timestamp).toDate().toISOString(), end: (d.end as Timestamp).toDate().toISOString() } as Event;
-            }));
-        });
-
-        const configRef = doc(db, 'configuration', 'main');
-        const unsubConfig = onSnapshot(configRef, (snap) => {
-            if (snap.exists()) {
-                const data = snap.data();
-                setSettings(data.settings || DEFAULT_SETTINGS);
-                setOpeningHours(data.openingHours || DEFAULT_OPENING_HOURS);
-            } else {
-                setDoc(configRef, { settings: DEFAULT_SETTINGS, openingHours: DEFAULT_OPENING_HOURS });
-            }
+            setEvents(
+                snap.docs.map((doc) => {
+                    const d = doc.data();
+                    return {
+                        id: doc.id,
+                        ...d,
+                        start: (d.start as Timestamp).toDate().toISOString(),
+                        end: (d.end as Timestamp).toDate().toISOString(),
+                    } as Event;
+                })
+            );
         });
 
         setLoading(false);
@@ -123,16 +157,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             unsubUsers();
             unsubSlots();
             unsubEvents();
-            unsubConfig();
         };
     }, []);
 
-    // 🔧 CRUD functions (inchangées)
+    // 🔧 CRUD
     const addUser = async (user: Omit<User, 'id'>) => await addDoc(collection(db, 'users'), user);
     const updateUser = async (u: User) => await setDoc(doc(db, 'users', u.id), u, { merge: true });
     const deleteUser = async (userId: string) => {
         await deleteDoc(doc(db, 'users', userId));
-        const userSlots = slots.filter(s => s.userId === userId);
+        const userSlots = slots.filter((s) => s.userId === userId);
         for (const s of userSlots) await deleteDoc(doc(db, 'slots', s.id));
     };
 
@@ -157,27 +190,64 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
 
     const deleteSlot = async (slotId: string) => await deleteDoc(doc(db, 'slots', slotId));
+
     const addEvent = async (event: Omit<Event, 'id'>) => {
-        await addDoc(collection(db, 'events'), { ...event, start: Timestamp.fromDate(new Date(event.start)), end: Timestamp.fromDate(new Date(event.end)) });
+        await addDoc(collection(db, 'events'), {
+            ...event,
+            start: Timestamp.fromDate(new Date(event.start)),
+            end: Timestamp.fromDate(new Date(event.end)),
+        });
     };
+
     const updateEvent = async (event: Event) => {
         const { id, ...data } = event;
-        await updateDoc(doc(db, 'events', id), { ...data, start: Timestamp.fromDate(new Date(data.start)), end: Timestamp.fromDate(new Date(data.end)) });
+        await updateDoc(doc(db, 'events', id), {
+            ...data,
+            start: Timestamp.fromDate(new Date(data.start)),
+            end: Timestamp.fromDate(new Date(data.end)),
+        });
     };
+
     const deleteEvent = async (eventId: string) => await deleteDoc(doc(db, 'events', eventId));
-    const updateSettings = async (s: Settings) => await setDoc(doc(db, 'configuration', 'main'), { settings: s }, { merge: true });
-    const updateOpeningHours = async (h: OpeningHoursSettings) => await setDoc(doc(db, 'configuration', 'main'), { openingHours: h }, { merge: true });
-    const applyUserTemplate = (userId: string, targetMonthDate: Date) => { alert('Logic template à adapter'); };
+
+    const updateSettings = async (s: Settings) =>
+        await setDoc(doc(db, 'configuration', 'main'), { settings: s }, { merge: true });
+
+    const updateOpeningHours = async (h: OpeningHoursSettings) =>
+        await setDoc(doc(db, 'configuration', 'main'), { openingHours: h }, { merge: true });
+
+    const applyUserTemplate = (userId: string, targetMonthDate: Date) => {
+        alert('Logic template à adapter');
+    };
 
     return (
-        <AppContext.Provider value={{
-            users, slots, events, settings, openingHours, currentUser, firebaseUser, loading,
-            addUser, updateUser, deleteUser,
-            addSlot, updateSlot, deleteSlot,
-            addEvent, updateEvent, deleteEvent,
-            updateSettings, updateOpeningHours, applyUserTemplate,
-            loginWithGoogle, logout
-        }}>
+        <AppContext.Provider
+            value={{
+                users,
+                slots,
+                events,
+                settings,
+                openingHours,
+                currentUser,
+                firebaseUser,
+                loading,
+                loginWithGoogle,
+                loginWithEmail,
+                logout,
+                addUser,
+                updateUser,
+                deleteUser,
+                addSlot,
+                updateSlot,
+                deleteSlot,
+                addEvent,
+                updateEvent,
+                deleteEvent,
+                updateSettings,
+                updateOpeningHours,
+                applyUserTemplate,
+            }}
+        >
             {children}
         </AppContext.Provider>
     );
