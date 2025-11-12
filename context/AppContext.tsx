@@ -189,7 +189,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         });
     };
 
-    const deleteSlot = async (slotId: string) => await deleteDoc(doc(db, 'slots', slotId));
+    const deleteSlot = async (slotId: string) => {
+        try {
+            await deleteDoc(doc(db, 'slots', slotId));
+            setSlots(prev => prev.filter(s => s.id !== slotId));
+        } catch (error) {
+            console.error("Erreur lors de la suppression du créneau :", error);
+        }
+    };
 
     const addEvent = async (event: Omit<Event, 'id'>) => {
         await addDoc(collection(db, 'events'), {

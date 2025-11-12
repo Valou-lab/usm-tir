@@ -1,4 +1,3 @@
-
 import React, { useContext, useMemo } from 'react';
 import { AppContext } from '../context/AppContext';
 import { addMonths } from '../utils/dateUtils';

@@ -30,23 +30,18 @@ export interface Settings {
 }
 
 export interface DailyHours {
-    isOpen: boolean;
-    start: string; // "HH:mm"
-    end: string;   // "HH:mm"
-}
-
-export interface WeeklyHoursDay extends DailyHours {
     dayOfWeek: number; // 0 for Sunday, 1 for Monday, etc.
+    isOpen: boolean;
+    start: string; // HH:mm
+    end: string; // HH:mm
 }
-
-export type WeeklyHours = WeeklyHoursDay[];
 
 export interface SpecialPeriod {
     id: string;
     name: string;
-    start: string; // "YYYY-MM-DD"
-    end: string;   // "YYYY-MM-DD"
-    hours: WeeklyHours;
+    start: string; // YYYY-MM-DD
+    end: string; // YYYY-MM-DD
+    hours: DailyHours[];
 }
 
 export interface Holiday {
@@ -56,7 +51,7 @@ export interface Holiday {
 }
 
 export interface OpeningHoursSettings {
-    defaultHours: WeeklyHours;
+    defaultHours: DailyHours[];
     specialPeriods: SpecialPeriod[];
     holidays: Holiday[];
 }

@@ -2,10 +2,10 @@ import React, { useContext } from 'react';
 import { AppContext } from '../context/AppContext';
 import { UserCircleIcon } from './Icons';
 import { useNavigate, Link } from 'react-router-dom';
+import logo from "../assets/LOGO-USMM-HD-5fa62623-ddb9cb45-640w.jpg";
 
 const Header: React.FC = () => {
     const context = useContext(AppContext);
-    const navigate = useNavigate();
     if (!context) return null;
 
     const { firebaseUser, currentUser, loginWithGoogle, logout } = context;
@@ -13,7 +13,10 @@ const Header: React.FC = () => {
     return (
         <header className="bg-brand-primary text-white shadow-md">
             <div className="container mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center h-16">
-                <h1 className="text-xl sm:text-2xl font-bold">Planning Association</h1>
+                <div className="flex items-center space-x-3">
+                    <img src={logo} alt="USM Malakoff Logo" className="h-12 rounded-md" />
+                    <h1 className="text-xl sm:text-2xl font-bold">USM Malakoff Tir Sportif</h1>
+                </div>
 
                 <nav className="flex items-center space-x-4">
                     {firebaseUser && <>

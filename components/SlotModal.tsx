@@ -65,26 +65,33 @@ const SlotModal: React.FC<SlotModalProps> = ({ isOpen, onClose, date, slot }) =>
 
     useEffect(() => {
         if (slot) {
-            setStartTime(new Date(slot.start).toTimeString().substring(0, 5));
-            setEndTime(new Date(slot.end).toTimeString().substring(0, 5));
-        } else if (date && dailyHours?.isOpen && timeOptions.length > 0) {
-            setStartTime(timeOptions[0]);
-            setEndTime(endTimeOptions[0] || timeOptions[1] || dailyHours.end);
+            // Mode édition
+            const start = new Date(slot.start);
+            const end = new Date(slot.end);
+            setStartTime(start.toTimeString().substring(0, 5));
+            setEndTime(end.toTimeString().substring(0, 5));
         }
-    }, [slot, date, dailyHours, timeOptions, endTimeOptions]);
+        else if (date && dailyHours?.isOpen) {
+            // Mode création : réinitialiser quand la date change
+            const [startHour, startMinute] = dailyHours.start.split(':');
+            const [endHour, endMinute] = dailyHours.end.split(':');
+
+            setStartTime(`${startHour}:${startMinute}`);
+            setEndTime(`${endHour}:${endMinute}`);
+        }
+    }, [slot?.id, date?.toDateString(), dailyHours?.start, dailyHours?.end]);
 
     useEffect(() => {
-        if (startTime && endTimeOptions.length > 0 && !endTimeOptions.includes(endTime)) {
+        if (endTimeOptions.length > 0 && !endTimeOptions.includes(endTime)) {
             setEndTime(endTimeOptions[0]);
         }
-    }, [startTime, endTime, endTimeOptions]);
-
+    }, [startTime, endTimeOptions]);
 
     if (!isOpen || (!date && !slot)) return null;
 
     const targetDateForDisplay = date || new Date(slot!.start);
 
-    if (!dailyHours || !dailyHours.isOpen) {
+    if (!dailyHours?.isOpen) {
         return (
             <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center">
                 <div className="bg-white rounded-lg shadow-xl p-8 w-full max-w-md">
